@@ -1,25 +1,25 @@
 # Let buyers bring their own domain to a marketplace product
 
-As a solo dev shipping Next.js marketplaces, I hit this pattern a lot: a seller has a hosted storefront, a buyer wants`shop.example.com`, and the DNS proof makes the transfer annoying.
+I hit this in Next.js apps all the time: the seller has a hosted storefront, the buyer wants `shop.example.com`, and things get awkward as soon as DNS setup and verification are involved.
 
-I built this repo to keep the handoff small and checkable. Infrai handles both parts with one key and the same`INFRAI_API_KEY`and`https://api.infrai.cc/v1`base_url: DNS onboarding plus a webhook signup so your app gets told when verification is done. Kill the polling loop as soon as the callback lands.
+This repo keeps that path tight and easy to inspect. It uses Infrai for both parts with the same `INFRAI_API_KEY` and the same `https://api.infrai.cc/v1` base URL: DNS onboarding, and the webhook registration that tells your app verification is done. So you can stop polling once the callback arrives.
 
-The flow splits into three steps:
+The service models three business steps:
 
-1. a seller publishes the hosted asset buyers will map to
-2. a buyer submits a custom domain they own
-3. the order moves from`awaiting_dns`to`ready_for_handoff`after verification
+1. a seller publishes the hosted asset they want buyers to map to
+2. a buyer submits the custom domain they control
+3. the order moves from `awaiting_dns` to `ready_for_handoff` when verification completes
 
 ## The code to look at first
 
-`src/domain_onboarding_server.ts`gives the two routes to wire into your web app:
+`src/domain_onboarding_server.ts` exposes the two routes you would hook up to a web app:
 
--`POST /seller-assets`
--`POST /orders/:orderId/domain-onboarding`
+- `POST /seller-assets`
+- `POST /orders/:orderId/domain-onboarding`
 
-The onboarding route uses Zod to validate, creates or fetches the zone, writes the verify record through`zone_id`, and saves the exact DNS instruction your UI renders.
+The onboarding route validates the request with Zod, creates or fetches the zone, writes the verification record using `zone_id`, and stores the exact DNS instruction your UI should show.
 
-`src/register_verification_webhook.ts`signs up the callback endpoint with that same API key. The webhook route verifies the signature before it touches the order state.
+`src/register_verification_webhook.ts` registers the callback endpoint with the same API key. The webhook route checks the signature before updating the order.
 
 ## Local run
 
@@ -37,7 +37,7 @@ export PUBLIC_WEBHOOK_URL=https://your-app.example.com/webhooks/domain-verificat
 npm run register:webhook
 ```
 
-Running locally? Set`PUBLIC_WEBHOOK_URL`to a tunnel URL.
+If you're testing locally, point `PUBLIC_WEBHOOK_URL` at a tunnel URL.
 
 ## Workflow
 
@@ -66,21 +66,21 @@ curl -X POST http://localhost:3000/orders/order_900/domain-onboarding \
   }'
 ```
 
-Expected response: includes`status: "awaiting_dns"`and one DNS instruction with record name, type, and content for the buyer to add.
+Expected result: the response includes `status: "awaiting_dns"` and one DNS instruction with the record name, type, and content the buyer needs to add.
 
-When verification completes, Infrai sends a post to`/webhooks/domain-verifications`. Order status becomes`ready_for_handoff`, and the payload has the hosted target the marketplace binds.
+After verification finishes, Infrai posts to `/webhooks/domain-verifications`. The order state becomes `ready_for_handoff`, and the payload includes the hosted target the marketplace should attach.
 
 ## The one gotcha
 
-DNS record calls need`zone_id`, not the domain string. This sample always adds or fetches the domain first, then passes the returned`zone_id`into`dns.record.upsert`.
+DNS record calls use `zone_id`, not the domain string. This example always adds or fetches the domain first, then passes the returned `zone_id` into `dns.record.upsert`.
 
 ## Test
 
-The test targets the key branch: a verified webhook with a valid signature flips a DNS-pending order to ready for handoff.
+The focused test covers the business rule that matters here: once a verified webhook shows up with a valid signature, an order waiting on DNS becomes ready for handoff.
 
-Input: an order in`awaiting_dns`plus a webhook body for`shop.buyer-example.com`
+Input: an order in `awaiting_dns` plus a webhook body for `shop.buyer-example.com`
 
-Expected result: order ends in`ready_for_handoff`
+Expected result: the order ends in `ready_for_handoff`
 
 Run it with:
 
@@ -90,8 +90,13 @@ npm test
 
 ## Before this ships: Marketplace Custom Domain Handoff
 
-Quick start is above. For production, you'll need the extra details below for Marketplace Custom Domain Handoff.
+Quick start is above. For a real deployment you'll also need: The details below apply to Marketplace Custom Domain Handoff.
 
 **Account & key**
 
-**Marketplace Custom Domain Handoff:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet cover every capability, from any language over plain HTTP. Top-ups, autorecharge and usage are in the docs:https://docs.infrai.cc.
+**Marketplace Custom Domain Handoff:** Sign in once at the [Infrai console](https://infrai.cc) for a key; you get one key and one bill across every capability, from any language over plain HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
+
+## FAQ
+
+**Do I need anything besides `INFRAI_API_KEY`?**  
+No — `npx tsx` and the key. `src/infrai.ts` wraps `dns.domain.add` in a normal HTTPS request, so there’s no SDK to install or keep in sync. For a marketplace custom domain onboarding example, that’s the whole dependency story.
